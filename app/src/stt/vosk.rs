@@ -23,31 +23,51 @@ pub fn init_vosk() {
 }
 
 pub fn recognize(data: &[i16], include_partial: bool) -> Option<String> {
-    let state = RECOGNIZER.get().unwrap().lock().unwrap().accept_waveform(data);
+    // Safe access to recognizer with single lock acquisition
+    let recognizer = match RECOGNIZER.get() {
+        Some(r) => r,
+        None => {
+            error!("VOSK recognizer not initialized");
+            return None;
+        }
+    };
+
+    let mut guard = match recognizer.lock() {
+        Ok(guard) => guard,
+        Err(e) => {
+            error!("Failed to lock VOSK recognizer: {}", e);
+            return None;
+        }
+    };
+
+    let state = guard.accept_waveform(data);
 
     match state {
         DecodingState::Running => {
             if include_partial {
-                Some(RECOGNIZER.get().unwrap().lock().unwrap().partial_result().partial.into())
+                Some(guard.partial_result().partial.into())
             } else {
                 None
             }
         }
         DecodingState::Finalized => {
             // Result will always be multiple because we called set_max_alternatives
-            Some(
-                RECOGNIZER.get().unwrap().lock().unwrap()
-                    .result()
-                    .multiple()
-                    .unwrap()
-                    .alternatives
-                    .first()
-                    .unwrap()
-                    .text
-                    .into(),
-            )
+            match guard.result().multiple() {
+                Some(result) => {
+                    result.alternatives
+                        .first()
+                        .map(|alt| alt.text.clone())
+                }
+                None => {
+                    warn!("VOSK returned finalized state but no alternatives");
+                    None
+                }
+            }
         }
-        DecodingState::Failed => None,
+        DecodingState::Failed => {
+            warn!("VOSK decoding failed");
+            None
+        }
     }
 }
 

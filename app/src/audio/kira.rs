@@ -44,8 +44,23 @@ pub fn play_sound(filename: &PathBuf) {
 
             // play it (non-blocking)
             MANAGER.with(|m| {
-                let audio_manager = &mut m.get().unwrap().lock().unwrap();
-                audio_manager.play(sound_data.clone()).unwrap();
+                match m.get() {
+                    Some(manager) => {
+                        match manager.lock() {
+                            Ok(mut audio_manager) => {
+                                if let Err(e) = audio_manager.play(sound_data.clone()) {
+                                    error!("Failed to play sound: {}", e);
+                                }
+                            },
+                            Err(e) => {
+                                error!("Failed to lock audio manager: {}", e);
+                            }
+                        }
+                    },
+                    None => {
+                        error!("Audio manager not initialized");
+                    }
+                }
             });
         },
         Err(msg) => {
