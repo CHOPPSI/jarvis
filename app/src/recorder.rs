@@ -34,26 +34,14 @@ pub fn init() -> Result<(), ()> {
         RecorderType::PortAudio => {
             // Init PortAudio
             info!("Initializing PortAudio recording backend");
-            todo!();
-            // match portaudio::init_microphone(get_selected_microphone_index(), FRAME_LENGTH.load(Ordering::SeqCst)) {
-            //     false => {
-            //         // Switch to PortAudio recorder
-            //         error!("PortAudio audio backend failed.");
-            //     },
-            //     _ => ()
-            // }
+            error!("PortAudio backend is not implemented yet");
+            return Err(());
         },
         RecorderType::Cpal => {
             // Init CPAL
             info!("Initializing CPAL recording backend");
-            todo!();
-            // match cpal::init_microphone(get_selected_microphone_index(), FRAME_LENGTH.load(Ordering::SeqCst)) {
-            //     false => {
-            //         // Switch to CPAL recorder
-            //         error!("CPAL audio backend failed.");
-            //     },
-            //     _ => ()
-            // }
+            error!("CPAL backend is not implemented yet");
+            return Err(());
         }
     }
 
@@ -66,12 +54,15 @@ pub fn read_microphone(frame_buffer: &mut [i16]) {
             pvrecorder::read_microphone(frame_buffer);
         },
         RecorderType::PortAudio => {
-            todo!();
-            // portaudio::read_microphone(frame_buffer);
+            error!("PortAudio backend is not implemented");
+            // Fill buffer with silence to avoid undefined behavior
+            frame_buffer.fill(0);
         },
         RecorderType::Cpal => {
-            // cpal::read_microphone(frame_buffer);
-            panic!("Cpal should be used via callback assignment");
+            // CPAL uses callback-based audio processing and shouldn't be used with blocking reads
+            error!("CPAL recorder doesn't support blocking read operations - use callback-based processing instead");
+            // Fill buffer with silence to avoid undefined behavior
+            frame_buffer.fill(0);
         }
     }
 }
@@ -82,12 +73,12 @@ pub fn start_recording() -> Result<(), ()> {
             return pvrecorder::start_recording(get_selected_microphone_index(), FRAME_LENGTH.get().unwrap().to_owned());
         },
         RecorderType::PortAudio => {
-            todo!();
-            // portaudio::start_recording(get_selected_microphone_index(), FRAME_LENGTH.load(Ordering::SeqCst));
+            error!("PortAudio backend is not implemented");
+            return Err(());
         },
         RecorderType::Cpal => {
-            todo!();
-            // cpal::start_recording(get_selected_microphone_index(), FRAME_LENGTH.load(Ordering::SeqCst));
+            error!("CPAL backend is not implemented");
+            return Err(());
         }
     }
 }
@@ -98,12 +89,12 @@ pub fn stop_recording() -> Result<(), ()> {
             pvrecorder::stop_recording()
         },
         RecorderType::PortAudio => {
-            todo!();
-            // portaudio::stop_recording();
+            error!("PortAudio backend is not implemented");
+            return Err(());
         },
         RecorderType::Cpal => {
-            todo!();
-            // cpal::stop_recording();
+            error!("CPAL backend is not implemented");
+            return Err(());
         }
     }
 }

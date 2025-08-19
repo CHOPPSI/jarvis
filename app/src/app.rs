@@ -78,8 +78,9 @@ fn main_loop() -> Result<(), ()> {
                                         // chain commands
                                         start = SystemTime::now();
                                     } else {
-                                        // skip, if chaining is not required
-                                        start = start.checked_sub(core::time::Duration::from_secs(1000)).unwrap();
+                                        // skip, if chaining is not required - set start time way back
+                                        // Use UNIX_EPOCH as a safe fallback to ensure timeout
+                                        start = SystemTime::UNIX_EPOCH;
                                     }
 
                                     continue 'voice_recognition; // continue voice recognition
