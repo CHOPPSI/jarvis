@@ -108,17 +108,22 @@ fn keyword_callback(_keyword_index: i32) {
     let mut frame_buffer = vec![0; recorder::FRAME_LENGTH.load(Ordering::SeqCst) as usize];
 
     // play greet phrase
-    events::play(
-        config::ASSISTANT_GREET_PHRASES
-            .choose(&mut rand::thread_rng())
-            .unwrap(),
-        TAURI_APP_HANDLE.get().unwrap(),
-    );
+    if let Some(phrase) = config::ASSISTANT_GREET_PHRASES.choose(&mut rand::thread_rng()) {
+        if let Some(app_handle) = TAURI_APP_HANDLE.get() {
+            events::play(phrase, app_handle);
+        } else {
+            error!("App handle not initialized - cannot play greet phrase");
+        }
+    }
 
     // emit assistant greet event
-    TAURI_APP_HANDLE.get().unwrap()
-        .emit_all(events::EventTypes::AssistantGreet.get(), ())
-        .unwrap();
+    if let Some(app_handle) = TAURI_APP_HANDLE.get() {
+        if let Err(e) = app_handle.emit_all(events::EventTypes::AssistantGreet.get(), ()) {
+            error!("Failed to emit assistant greet event: {}", e);
+        }
+    } else {
+        error!("App handle not initialized - cannot emit greet event");
+    }
 
     // the loop
     while !STOP_LISTENING.load(Ordering::SeqCst) {
@@ -144,11 +149,17 @@ fn keyword_callback(_keyword_index: i32) {
                     println!("Command found: {:?}", cmd_path);
                     println!("Executing ...");
 
-                    let cmd_result = assistant_commands::execute_command(
-                        &cmd_path,
-                        &cmd_config,
-                        TAURI_APP_HANDLE.get().unwrap(),
-                    );
+                    let cmd_result = match TAURI_APP_HANDLE.get() {
+                        Some(app_handle) => assistant_commands::execute_command(
+                            &cmd_path,
+                            &cmd_config,
+                            app_handle,
+                        ),
+                        None => {
+                            error!("App handle not initialized - cannot execute command");
+                            Err("App handle not available".to_string())
+                        }
+                    };
 
                     match cmd_result {
                         Ok(chain) => {
@@ -158,8 +169,9 @@ fn keyword_callback(_keyword_index: i32) {
                                 // continue chaining commands
                                 start = SystemTime::now(); // listen for more commands
                             } else {
-                                // skip forward if chaining is not required
-                                start = start.checked_sub(core::time::Duration::from_secs(1000)).unwrap();
+                                // skip forward if chaining is not required - set start time way back
+                                // Use UNIX_EPOCH as a safe fallback to ensure timeout
+                                start = SystemTime::UNIX_EPOCH;
                             }
 
                             continue;
@@ -169,9 +181,13 @@ fn keyword_callback(_keyword_index: i32) {
                         }
                     }
 
-                    TAURI_APP_HANDLE.get().unwrap()
-                        .emit_all(events::EventTypes::AssistantWaiting.get(), ())
-                        .unwrap();
+                    if let Some(app_handle) = TAURI_APP_HANDLE.get() {
+                        if let Err(e) = app_handle.emit_all(events::EventTypes::AssistantWaiting.get(), ()) {
+                            error!("Failed to emit assistant waiting event: {}", e);
+                        }
+                    } else {
+                        error!("App handle not initialized - cannot emit waiting event");
+                    }
                     break; // return to picovoice after command execution (no matter successfull or not)
                 }
             }
@@ -180,9 +196,13 @@ fn keyword_callback(_keyword_index: i32) {
         match start.elapsed() {
             Ok(elapsed) if elapsed > config::CMS_WAIT_DELAY => {
                 // return to picovoice after N seconds
-                TAURI_APP_HANDLE.get().unwrap()
-                    .emit_all(events::EventTypes::AssistantWaiting.get(), ())
-                    .unwrap();
+                if let Some(app_handle) = TAURI_APP_HANDLE.get() {
+                    if let Err(e) = app_handle.emit_all(events::EventTypes::AssistantWaiting.get(), ()) {
+                        error!("Failed to emit assistant waiting event (timeout): {}", e);
+                    }
+                } else {
+                    error!("App handle not initialized - cannot emit timeout waiting event");
+                }
                 break;
             }
             _ => (),
@@ -252,7 +272,21 @@ fn start_recording() -> Result<bool, String> {
             // start recording for Rustpotter
             // You need a buffer of size `rustpotter.get_samples_per_frame()` when using samples.
             // You need a buffer of size `rustpotter.get_bytes_per_frame()` when using bytes.
-            frame_length = RUSTPOTTER.get().unwrap().lock().unwrap().get_samples_per_frame();
+            frame_length = match RUSTPOTTER.get() {
+                Some(rustpotter) => {
+                    match rustpotter.lock() {
+                        Ok(rp) => rp.get_samples_per_frame(),
+                        Err(e) => {
+                            error!("Failed to lock Rustpotter: {}", e);
+                            512 // fallback frame length
+                        }
+                    }
+                },
+                None => {
+                    error!("Rustpotter not initialized");
+                    512 // fallback frame length
+                }
+            };
             recorder::FRAME_LENGTH.store(frame_length as u32, Ordering::SeqCst);
         },
         config::WakeWordEngine::Vosk => {
@@ -277,7 +311,11 @@ fn start_recording() -> Result<bool, String> {
     info!("START listening ...");
 
     // greet user
-    events::play("run", TAURI_APP_HANDLE.get().unwrap());
+    if let Some(app_handle) = TAURI_APP_HANDLE.get() {
+        events::play("run", app_handle);
+    } else {
+        error!("App handle not initialized - cannot play run sound");
+    }
 
     // record
     match recorder::RECORDER_TYPE.load(Ordering::SeqCst) {

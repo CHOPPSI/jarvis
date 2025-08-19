@@ -91,13 +91,19 @@ fn create_stream(device_index: i32, frame_length: u32) -> Result<Stream<pa::Bloc
         Ok(pa) => {
             let input_settings = match get_input_settings(DeviceIndex(device_index as u32), &pa, SAMPLE_RATE, frame_length, CHANNELS) {
                 Ok(settings) => settings,
-                Err(error) => panic!("{}", String::from(error))
+                Err(error) => {
+                    error!("Failed to get input settings: {}", error);
+                    return Err(pa::Error::InvalidDevice);
+                }
             };
         
             // Construct a stream with input and output sample types of i16
             match pa.open_blocking_stream(input_settings) {
                 Ok(strm) => Ok(strm),
-                Err(error) => panic!("{}", error.to_string()),
+                Err(error) => {
+                    error!("Failed to open blocking stream: {}", error);
+                    Err(error)
+                },
             }
         },
         Err(msg) => Err(msg)
@@ -106,8 +112,9 @@ fn create_stream(device_index: i32, frame_length: u32) -> Result<Stream<pa::Bloc
 
 fn get_input_latency(audio_port: &pa::PortAudio, input_index: pa::DeviceIndex) -> Result<f64, String>
 {
-    let input_device_information = audio_port.device_info(input_index).or_else(|error| Err(String::from(format!("{}", error))));
-    Ok(input_device_information.unwrap().default_low_input_latency)
+    let input_device_information = audio_port.device_info(input_index)
+        .map_err(|error| format!("Failed to get device info: {}", error))?;
+    Ok(input_device_information.default_low_input_latency)
 }
 
 fn get_input_stream_parameters(input_index: pa::DeviceIndex, latency: f64, channels: i32) -> Result<pa::StreamParameters<i16>, String>
@@ -148,10 +155,10 @@ where
                     println!("Output stream has underflowed")
                 }
             },
-            Err(err) => panic!(
-                "An error occurred while waiting for the {} stream: {}",
-                name, err
-            ),
+            Err(err) => {
+                error!("An error occurred while waiting for the {} stream: {}", name, err);
+                return 0; // Return 0 frames to indicate error
+            },
         }
     }
 }
@@ -171,9 +178,27 @@ pub fn read_microphone(frame_buffer: &mut [i16]) {
                 // let input_samples = stream.read(in_frames).expect("Cannot read frames ...");
                 // println!("Read {:?} frames from the input stream.", in_frames);
 
-                let input_samples = stream.read(in_frames).expect("Cannot read frames ...");
-                println!("Read: {} (required {})", input_samples.len(), frame_buffer.len());
-                frame_buffer.copy_from_slice(input_samples.chunks(frame_buffer.len()).last().unwrap());
+                match stream.read(in_frames) {
+                    Ok(input_samples) => {
+                        println!("Read: {} (required {})", input_samples.len(), frame_buffer.len());
+                        if let Some(last_chunk) = input_samples.chunks(frame_buffer.len()).last() {
+                            if last_chunk.len() == frame_buffer.len() {
+                                frame_buffer.copy_from_slice(last_chunk);
+                            } else {
+                                // Handle partial chunk - fill remaining with zeros
+                                frame_buffer[..last_chunk.len()].copy_from_slice(last_chunk);
+                                frame_buffer[last_chunk.len()..].fill(0);
+                            }
+                        } else {
+                            // No data available, fill with silence
+                            frame_buffer.fill(0);
+                        }
+                    },
+                    Err(e) => {
+                        error!("Cannot read frames: {}", e);
+                        frame_buffer.fill(0); // Fill with silence on error
+                    }
+                }
             }
             // r.get().unwrap().load().read(frame_buffer).expect("Failed to read audio frame");
         }
@@ -186,20 +211,44 @@ pub fn start_recording(device_index: i32, frame_length: u32) {
 
     // start recording
     RECORDER.with(|r| {
-        r.get().unwrap().load().lock().unwrap().start().expect("Failed to start audio recording!");
-        IS_RECORDING.store(true, Ordering::SeqCst);
-        info!("START recording from microphone ...");
+        if let Some(recorder) = r.get() {
+            let stream = recorder.load();
+            match stream.lock() {
+                Ok(mut stream) => {
+                    match stream.start() {
+                        Ok(_) => {
+                            IS_RECORDING.store(true, Ordering::SeqCst);
+                            info!("START recording from microphone ...");
+                        },
+                        Err(e) => error!("Failed to start audio recording: {}", e),
+                    }
+                },
+                Err(e) => error!("Failed to lock stream: {}", e),
+            }
+        } else {
+            error!("Recorder not initialized");
+        }
     });
 }
 
 pub fn stop_recording() {
     RECORDER.with(|r| {
-        if !r.get().is_none() && IS_RECORDING.load(Ordering::SeqCst) {
-            // stop recording
-            let pa = r.get().unwrap().load();
-            r.get().unwrap().load().lock().unwrap().stop().expect("Failed to stop audio recording!");
-            IS_RECORDING.store(false, Ordering::SeqCst);
-            info!("STOP recording from microphone ...");
+        if let Some(recorder) = r.get() {
+            if IS_RECORDING.load(Ordering::SeqCst) {
+                let stream = recorder.load();
+                match stream.lock() {
+                    Ok(mut stream) => {
+                        match stream.stop() {
+                            Ok(_) => {
+                                IS_RECORDING.store(false, Ordering::SeqCst);
+                                info!("STOP recording from microphone ...");
+                            },
+                            Err(e) => error!("Failed to stop audio recording: {}", e),
+                        }
+                    },
+                    Err(e) => error!("Failed to lock stream for stopping: {}", e),
+                }
+            }
         }
     });
 }

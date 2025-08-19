@@ -44,6 +44,9 @@ mod audio;
 // include listener
 mod listener;
 
+// include safe globals
+mod safe_globals;
+
 // some global data
 static APP_DIR: Lazy<PathBuf> = Lazy::new(|| {env::current_dir().unwrap()});
 static SOUND_DIR: Lazy<PathBuf> = Lazy::new(|| {APP_DIR.clone().join("sound")});
@@ -61,9 +64,17 @@ fn main() -> Result<(), String> {
     log::init_logging()?;
 
     // log some base info
-    info!("Starting Jarvis v{} ...", config::APP_VERSION.unwrap());
-    info!("Config directory is: {}", APP_CONFIG_DIR.get().unwrap().display());
-    info!("Log directory is: {}", APP_LOG_DIR.get().unwrap().display());
+    info!("Starting Jarvis v{} ...", config::APP_VERSION.unwrap_or("unknown"));
+    
+    match safe_globals::get_config_dir_display() {
+        Ok(dir) => info!("Config directory is: {}", dir),
+        Err(e) => error!("Failed to get config directory: {}", e),
+    }
+    
+    match safe_globals::get_log_dir_display() {
+        Ok(dir) => info!("Log directory is: {}", dir),
+        Err(e) => error!("Failed to get log directory: {}", e),
+    }
 
     // initialize database (settings)
     DB.set(db::init_settings());
@@ -92,9 +103,19 @@ fn main() -> Result<(), String> {
 
     // init commands
     info!("Initializing commands.");
-    let commands = commands::parse_commands().unwrap();
-    info!("Commands initialized.\nOverall commands parsed: {}\nParsed commands: {:?}", commands.len(), commands::list(&commands));
-    COMMANDS_LIST.set(commands).unwrap();
+    match commands::parse_commands() {
+        Ok(commands) => {
+            info!("Commands initialized.\nOverall commands parsed: {}\nParsed commands: {:?}", commands.len(), commands::list(&commands));
+            if let Err(_) = COMMANDS_LIST.set(commands) {
+                error!("Failed to set commands list - already initialized");
+                app::close(1);
+            }
+        },
+        Err(e) => {
+            error!("Failed to parse commands: {:?}", e);
+            app::close(1);
+        }
+    }
 
     // init audio
     if audio::init().is_err() {

@@ -4,7 +4,7 @@ mod pvrecorder;
 
 use once_cell::sync::OnceCell;
 
-use crate::{DB, config, config::structs::RecorderType};
+use crate::{DB, config, config::structs::RecorderType, safe_globals};
 
 static RECORDER_TYPE: OnceCell<RecorderType> = OnceCell::new();
 static FRAME_LENGTH: OnceCell<u32> = OnceCell::new();
@@ -12,15 +12,46 @@ static FRAME_LENGTH: OnceCell<u32> = OnceCell::new();
 pub fn init() -> Result<(), ()> {
     // set default recorder type
     // @TODO. Make it configurable?
-    RECORDER_TYPE.set(config::DEFAULT_RECORDER_TYPE).unwrap();
+    if let Err(_) = RECORDER_TYPE.set(config::DEFAULT_RECORDER_TYPE) {
+        error!("Recorder type already initialized");
+        return Err(());
+    }
 
     // load given recorder
-    match RECORDER_TYPE.get().unwrap() {
+    let recorder_type = match RECORDER_TYPE.get() {
+        Some(rt) => rt,
+        None => {
+            error!("Failed to get recorder type after initialization");
+            return Err(());
+        }
+    };
+    
+    match recorder_type {
         RecorderType::PvRecorder => {
             // Init Pv Recorder
             info!("Initializing PvRecorder recording backend.");
-            FRAME_LENGTH.set(512u32).unwrap(); // pvrecorder requires frame buffer of 512
-            match pvrecorder::init_microphone(get_selected_microphone_index(), FRAME_LENGTH.get().unwrap().to_owned()) {
+            if let Err(_) = FRAME_LENGTH.set(512u32) {
+                error!("Frame length already initialized");
+                return Err(());
+            }
+            
+            let mic_index = match get_selected_microphone_index() {
+                Ok(idx) => idx,
+                Err(e) => {
+                    error!("Failed to get microphone index: {}", e);
+                    return Err(());
+                }
+            };
+            
+            let frame_len = match FRAME_LENGTH.get() {
+                Some(len) => *len,
+                None => {
+                    error!("Frame length not initialized");
+                    return Err(());
+                }
+            };
+            
+            match pvrecorder::init_microphone(mic_index, frame_len) {
                 false => {
                     error!("Recorder initialization failed.");
 
@@ -49,7 +80,16 @@ pub fn init() -> Result<(), ()> {
 }
 
 pub fn read_microphone(frame_buffer: &mut [i16]) {
-    match RECORDER_TYPE.get().unwrap() {
+    let recorder_type = match RECORDER_TYPE.get() {
+        Some(rt) => rt,
+        None => {
+            error!("Recorder type not initialized");
+            frame_buffer.fill(0);
+            return;
+        }
+    };
+    
+    match recorder_type {
         RecorderType::PvRecorder => {
             pvrecorder::read_microphone(frame_buffer);
         },
@@ -68,9 +108,33 @@ pub fn read_microphone(frame_buffer: &mut [i16]) {
 }
 
 pub fn start_recording() -> Result<(), ()> {
-    match RECORDER_TYPE.get().unwrap() {
+    let recorder_type = match RECORDER_TYPE.get() {
+        Some(rt) => rt,
+        None => {
+            error!("Recorder type not initialized");
+            return Err(());
+        }
+    };
+    
+    match recorder_type {
         RecorderType::PvRecorder => {
-            return pvrecorder::start_recording(get_selected_microphone_index(), FRAME_LENGTH.get().unwrap().to_owned());
+            let mic_index = match get_selected_microphone_index() {
+                Ok(idx) => idx,
+                Err(e) => {
+                    error!("Failed to get microphone index: {}", e);
+                    return Err(());
+                }
+            };
+            
+            let frame_len = match FRAME_LENGTH.get() {
+                Some(len) => *len,
+                None => {
+                    error!("Frame length not initialized");
+                    return Err(());
+                }
+            };
+            
+            return pvrecorder::start_recording(mic_index, frame_len);
         },
         RecorderType::PortAudio => {
             error!("PortAudio backend is not implemented");
@@ -84,7 +148,15 @@ pub fn start_recording() -> Result<(), ()> {
 }
 
 pub fn stop_recording() -> Result<(), ()> {
-    match RECORDER_TYPE.get().unwrap() {
+    let recorder_type = match RECORDER_TYPE.get() {
+        Some(rt) => rt,
+        None => {
+            error!("Recorder type not initialized");
+            return Err(());
+        }
+    };
+    
+    match recorder_type {
         RecorderType::PvRecorder => {
             pvrecorder::stop_recording()
         },
@@ -99,6 +171,9 @@ pub fn stop_recording() -> Result<(), ()> {
     }
 }
 
-pub fn get_selected_microphone_index() -> i32 {
-    DB.get().unwrap().microphone
+pub fn get_selected_microphone_index() -> Result<i32, &'static str> {
+    match safe_globals::get_db() {
+        Ok(db) => Ok(db.microphone),
+        Err(e) => Err(e),
+    }
 }

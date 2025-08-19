@@ -23,6 +23,9 @@ mod tray;
 // include tauri commands
 // mod tauri_commands;
 
+// include safe globals
+mod safe_globals;
+
 // some global data
 static APP_DIRS: OnceCell<AppDirs> = OnceCell::new();
 static APP_CONFIG_DIR: OnceCell<PathBuf> = OnceCell::new();
@@ -37,9 +40,17 @@ fn main() -> Result<(), String> {
     log::init_logging()?;
 
     // log some base info
-    info!("Starting Jarvis v{} ...", config::APP_VERSION.unwrap());
-    info!("Config directory is: {}", APP_CONFIG_DIR.get().unwrap().display());
-    info!("Log directory is: {}", APP_LOG_DIR.get().unwrap().display());
+    info!("Starting Jarvis v{} ...", config::APP_VERSION.unwrap_or("unknown"));
+    
+    match safe_globals::get_config_dir_display() {
+        Ok(dir) => info!("Config directory is: {}", dir),
+        Err(e) => error!("Failed to get config directory: {}", e),
+    }
+    
+    match safe_globals::get_log_dir_display() {
+        Ok(dir) => info!("Log directory is: {}", dir),
+        Err(e) => error!("Failed to get log directory: {}", e),
+    }
 
     // initialize database (settings)
     DB.set(db::init_settings());

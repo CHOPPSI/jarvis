@@ -1,6 +1,6 @@
 use std::time::SystemTime;
 
-use crate::{config, audio, recorder, listener, stt, commands, COMMANDS_LIST};
+use crate::{config, audio, recorder, listener, stt, commands, safe_globals};
 use rand::seq::SliceRandom;
 
 pub fn start() -> Result<(), ()> {
@@ -62,7 +62,15 @@ fn main_loop() -> Result<(), ()> {
                         recognized_voice = recognized_voice.trim().into();
 
                         // infer command
-                        if let Some((cmd_path, cmd_config)) = commands::fetch_command(&recognized_voice, &COMMANDS_LIST.get().unwrap()) {
+                        let commands_list = match safe_globals::get_commands() {
+                            Ok(list) => list,
+                            Err(e) => {
+                                error!("Failed to get commands list: {}", e);
+                                break 'voice_recognition;
+                            }
+                        };
+                        
+                        if let Some((cmd_path, cmd_config)) = commands::fetch_command(&recognized_voice, commands_list) {
                             // some debug info
                             info!("Recognized voice (filtered): {}", recognized_voice);
                             info!("Command found: {:?}", cmd_path);
